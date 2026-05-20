@@ -7,6 +7,7 @@ import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.companion.math.BoundingBox3i;
+import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.plot.LevelPlot;
@@ -69,28 +70,13 @@ public class PhysicsChunkTicketManager {
     public void update(final ServerLevel level, final ServerSubLevelContainer container, final SubLevelPhysicsSystem system, final PhysicsPipeline pipeline, final double timeStep) {
         final SubLevelHoldingChunkMap holdingChunkMap = container.getHoldingChunkMap();
         final long gameTime = level.getGameTime();
-        final Iterator<Map.Entry<SectionPos, PhysicsChunkTicket>> chunkTicketIter = this.physicsChunks.entrySet().iterator();
 
         final Collection<ServerSubLevel> forceLoaded = container.collectForceLoadedSubLevels();
 
-        while (chunkTicketIter.hasNext()) {
-            final Map.Entry<SectionPos, PhysicsChunkTicket> entry = chunkTicketIter.next();
-            final SectionPos sectionPos = entry.getKey();
-            final PhysicsChunkTicket ticket = entry.getValue();
+        this.expirePhysicsChunkTickets(level, pipeline, gameTime);
 
-            final LevelPlot plot = SubLevelContainer.getContainer(level).getPlot(sectionPos.chunk());
-
-            final boolean outdated = ticket.lastInhabitedTick() < gameTime - 20 && plot == null;
-            final boolean noLongerExistent = !isChunkLoadedEnough(level, sectionPos.x(), sectionPos.z());
-            if (outdated || noLongerExistent) {
-                pipeline.handleChunkSectionRemoval(sectionPos.x(), sectionPos.y(), sectionPos.z());
-                chunkTicketIter.remove();
-            } else {
-                if (SubLevelPhysicsSystem.USE_TICKETS_FOR_QUERIES && ticket.residentSubLevels() != null) {
-                    if (!ticket.residentSubLevels().isEmpty())
-                        ticket.residentSubLevels().clear();
-                }
-            }
+        if (DimensionPhysicsData.of(level).ignoreChunks()) {
+            return;
         }
 
         final DistanceManager distanceManager = level.getChunkSource().chunkMap.getDistanceManager();
@@ -232,6 +218,30 @@ public class PhysicsChunkTicketManager {
                             }
                         }
                     }
+                }
+            }
+        }
+    }
+
+    private void expirePhysicsChunkTickets(final ServerLevel level, final PhysicsPipeline pipeline, final long gameTime) {
+        final Iterator<Map.Entry<SectionPos, PhysicsChunkTicket>> chunkTicketIter = this.physicsChunks.entrySet().iterator();
+
+        while (chunkTicketIter.hasNext()) {
+            final Map.Entry<SectionPos, PhysicsChunkTicket> entry = chunkTicketIter.next();
+            final SectionPos sectionPos = entry.getKey();
+            final PhysicsChunkTicket ticket = entry.getValue();
+
+            final LevelPlot plot = SubLevelContainer.getContainer(level).getPlot(sectionPos.chunk());
+
+            final boolean outdated = ticket.lastInhabitedTick() < gameTime - 20 && plot == null;
+            final boolean noLongerExistent = !isChunkLoadedEnough(level, sectionPos.x(), sectionPos.z());
+            if (outdated || noLongerExistent) {
+                pipeline.handleChunkSectionRemoval(sectionPos.x(), sectionPos.y(), sectionPos.z());
+                chunkTicketIter.remove();
+            } else {
+                if (SubLevelPhysicsSystem.USE_TICKETS_FOR_QUERIES && ticket.residentSubLevels() != null) {
+                    if (!ticket.residentSubLevels().isEmpty())
+                        ticket.residentSubLevels().clear();
                 }
             }
         }
