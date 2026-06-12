@@ -4,6 +4,10 @@ plugins {
     id 'net.neoforged.moddev'
 }
 
+base{
+    archivesName = "Sable_Dupe_Fix-neoforge"
+}
+
 neoForge {
     version = neoforge_version
     // Automatically enable neoforge AccessTransformers if the file exists
@@ -95,4 +99,41 @@ dependencies {
         exclude group: "me.fallenbreath"
     })
     compileOnly("foundry.imguimc:imguimc-neoforge-${project.minecraft_version}:${project.imguimc_version}")
+}
+
+tasks.register("deploy"){
+    notCompatibleWithConfigurationCache("Deploy uses ssh/scp external processes")
+
+    dependsOn jar
+
+    String serverFolder = "Optimization/Server";
+    String jarName = "Sable_Dupe_Fix";
+    String sessionName = "dev";
+    doLast {
+        providers.exec {
+            commandLine "find",
+                    "/home/aerosmp/Desktop/${serverFolder}/mods",
+                    "-maxdepth", "1",
+                    "-type","f",
+                    "-name","${jarName}*.jar",
+                    "-delete"
+            //commandLine "find /home/aerosmp/Desktop/${serverFolder}/mods -maxdepth 1 -type f -name '${jarNameStart}*' -delete"
+        }.result.get().assertNormalExitValue()
+        copy{
+            from tasks.named("jar").get().archiveFile
+            into "/home/aerosmp/Desktop/${serverFolder}/mods"
+        }
+        providers.exec {
+            commandLine "tmux",
+                    "send-keys","-t",
+                    "${sessionName}:0.0","Escape"
+        }.result.get().assertNormalExitValue()
+        providers.exec {
+            commandLine "tmux",
+                    "send-keys","-t",
+                    "${sessionName}:0.0","C-u",
+                    "stop",
+                    "Enter"
+        }.result.get().assertNormalExitValue()
+    }
 }

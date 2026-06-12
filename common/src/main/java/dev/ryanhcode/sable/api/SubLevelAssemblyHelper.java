@@ -65,6 +65,22 @@ public class SubLevelAssemblyHelper {
      * @param blocks all blocks that will be assembled into the sub-level
      * @param bounds the bounds in which {@link TrackingPoint tracking points} and retained entities will be moved
      */
+
+    private static final ThreadLocal<Map<Level, Set<BlockPos>>> MOVING_BLOCKS = ThreadLocal.withInitial(IdentityHashMap::new);
+
+    public static boolean isMovingBlock(final Level level, final BlockPos pos) {
+        final Set<BlockPos> positions = MOVING_BLOCKS.get().get(level);
+        return positions != null && positions.contains(pos);
+    }
+
+    public static void markMovingBlock(final Level level, final BlockPos pos){
+        MOVING_BLOCKS.get().computeIfAbsent(level, ignored -> new HashSet<>()).add(pos.immutable());
+    }
+
+    private static void clearMovingBlocks(){
+        MOVING_BLOCKS.get().clear();
+    }
+
     public static ServerSubLevel assembleBlocks(final ServerLevel level, final BlockPos anchor, final Iterable<BlockPos> blocks, final BoundingBox3ic bounds) {
         final ServerSubLevelContainer container = SubLevelContainer.getContainer(level);
         assert container != null;
@@ -292,10 +308,16 @@ public class SubLevelAssemblyHelper {
 
         final List<BlockState> states = new ArrayList<>();
 
+        final List<BlockPos> blockPositions = new ArrayList<>();
+        for (final BlockPos block : blocks){
+            final BlockPos sourcePos = block.immutable();
+            blockPositions.add(sourcePos);
+        }
+
         BlockPos firstBlock = null;
         Vector2i chunkBoundsMin = null;
         Vector2i chunkBoundsMax = null;
-        for (final BlockPos block : blocks) {
+        for (final BlockPos block : blockPositions) {
             if (firstBlock == null) {
                 firstBlock = block;
             }
@@ -324,91 +346,115 @@ public class SubLevelAssemblyHelper {
             }
         }
 
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
-        for (final BlockPos block : blocks) {
-            final BlockState state = accelerator.getBlockState(block);
-            final BlockPos newPos = transform.apply(block);
-
-            try {
-                final BlockState subLevelState = transform.apply(state);
-
-                if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
-                    listener.beforeMove(level, resultingLevel, state, block, newPos);
-                }
-
-                final BlockEntity blockEntity = level.getBlockEntity(block);
-
-                CompoundTag tag = null;
-
-                if (blockEntity != null) {
-                    tag = blockEntity.saveWithFullMetadata(level.registryAccess());
-
-                    tag.putInt("x", newPos.getX());
-                    tag.putInt("y", newPos.getY());
-                    tag.putInt("z", newPos.getZ());
-                }
-
-                if (blockEntity instanceof final RandomizableContainer container) {
-                    container.setLootTable(null);
-                }
-                if (blockEntity instanceof final Clearable clearable) {
-                    clearable.clearContent();
-                }
-
-                final LevelChunk chunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(newPos.getX()), SectionPos.blockToSectionCoord(newPos.getZ()));
-
-                chunk.setBlockState(newPos, subLevelState, true);
-                states.add(subLevelState);
-
-                final BlockEntity newBlockEntity = resultingLevel.getBlockEntity(newPos);
-
-                if (newBlockEntity != null && tag != null) {
-                    newBlockEntity.loadWithComponents(tag, level.registryAccess());
-                }
-
-                if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
-                    listener.afterMove(level, resultingLevel, state, block, newPos);
-                }
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to move block {} at {} to {}", state, block, newPos, e);
-            }
-        }
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
-
-        int i = 0;
-        for (final BlockPos untransformed : blocks) {
-            final BlockPos pos = transform.apply(untransformed);
-
-            try {
-                final LevelChunk levelchunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
-                final BlockState subLevelState = states.get(i);
-                SubLevelAssemblyHelper.markAndNotifyBlock(resultingLevel, pos, levelchunk, Blocks.AIR.defaultBlockState(), subLevelState, 3, 512);
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to mark & notify block {} (untransformed = {})", pos, untransformed, e);
+        try{
+            for (final BlockPos sourcePos : blockPositions) {
+                markMovingBlock(level,sourcePos);
+                markMovingBlock(resultingLevel,transform.apply(sourcePos).immutable());
             }
 
-            i++;
-        }
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
+            for (final BlockPos block : blockPositions) {
+                final BlockState state = accelerator.getBlockState(block);
+                final BlockPos newPos = transform.apply(block);
 
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
-        // destroy all the old blocks
-        for (final BlockPos block : blocks) {
-            final BlockState subLevelState = Blocks.AIR.defaultBlockState();
+                try {
+                    final BlockState subLevelState = transform.apply(state);
 
-            try {
-                final LevelChunk chunk = accelerator.getChunk(SectionPos.blockToSectionCoord(block.getX()),
-                        SectionPos.blockToSectionCoord(block.getZ()));
+                    if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
+                        listener.beforeMove(level, resultingLevel, state, block, newPos);
+                    }
 
-                chunk.setBlockState(block, subLevelState, true);
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to destroy old block during assembly {}", block, e);
+                    final BlockEntity blockEntity = level.getBlockEntity(block);
+
+                    CompoundTag tag = null;
+
+                    if (blockEntity != null) {
+                        tag = blockEntity.saveWithFullMetadata(level.registryAccess());
+
+                        tag.putInt("x", newPos.getX());
+                        tag.putInt("y", newPos.getY());
+                        tag.putInt("z", newPos.getZ());
+                    }
+
+                    if (blockEntity instanceof final RandomizableContainer container) {
+                        container.setLootTable(null);
+                    }
+                    if (blockEntity instanceof final Clearable clearable) {
+                        clearable.clearContent();
+                    }
+
+                    final LevelChunk chunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(newPos.getX()), SectionPos.blockToSectionCoord(newPos.getZ()));
+
+                    chunk.setBlockState(newPos, subLevelState, true);
+                    states.add(subLevelState);
+
+                    final BlockEntity newBlockEntity = resultingLevel.getBlockEntity(newPos);
+
+                    if (newBlockEntity != null && tag != null) {
+                        newBlockEntity.loadWithComponents(tag, level.registryAccess());
+                    }
+
+                    if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
+                        listener.afterMove(level, resultingLevel, state, block, newPos);
+                    }
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to move block {} at {} to {}", state, block, newPos, e);
+                }
+            }
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level, true);
+            // destroy all the old blocks
+            for (final BlockPos block : blockPositions) {
+                final BlockState subLevelState = Blocks.AIR.defaultBlockState();
+
+                try {
+                    final BlockEntity sourceBlockEntity = level.getBlockEntity(block);
+
+                    if(sourceBlockEntity instanceof final Clearable clearable){
+                        clearable.clearContent();
+                        sourceBlockEntity.setChanged();
+                    }
+
+                    if(sourceBlockEntity != null){
+                        level.removeBlockEntity(block);
+                    }
+
+                    final LevelChunk chunk = accelerator.getChunk(SectionPos.blockToSectionCoord(block.getX()),
+                            SectionPos.blockToSectionCoord(block.getZ()));
+
+                    chunk.setBlockState(block, subLevelState, true);
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to destroy old block during assembly {}", block, e);
+                }
+            }
+
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level, false);
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
+
+            int i = 0;
+            for (final BlockPos untransformed : blockPositions) {
+                final BlockPos pos = transform.apply(untransformed);
+
+                try {
+                    final LevelChunk levelchunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+                    final BlockState subLevelState = states.get(i);
+                    SubLevelAssemblyHelper.markAndNotifyBlock(resultingLevel, pos, levelchunk, Blocks.AIR.defaultBlockState(), subLevelState, 18, 512);
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to mark & notify block {} (untransformed = {})", pos, untransformed, e);
+                }
+
+                i++;
+            }
+
+            for (final BlockPos block : blockPositions) {
+                final BlockState subLevelState = Blocks.AIR.defaultBlockState();
+                level.sendBlockUpdated(block, Blocks.STONE.defaultBlockState(), subLevelState, 3);
             }
         }
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
-
-        for (final BlockPos block : blocks) {
-            final BlockState subLevelState = Blocks.AIR.defaultBlockState();
-            resultingLevel.sendBlockUpdated(block, Blocks.STONE.defaultBlockState(), subLevelState, 3);
+        finally {
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level,false);
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
+            clearMovingBlocks();
         }
     }
 

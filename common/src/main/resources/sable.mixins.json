@@ -82,6 +82,7 @@
   ],
   "mixins": [
     "assembly.AbstractFurnaceBlockEntityMixin",
+    "assembly.NeighborUpdaterMixin",
     "block_decal_render.ServerLevelMixin",
     "block_placement.BlockPlaceContextMixin",
     "block_placement.EntityGetterMixin",
