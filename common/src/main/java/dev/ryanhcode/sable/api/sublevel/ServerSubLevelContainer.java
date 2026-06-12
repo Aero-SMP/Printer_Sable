@@ -325,7 +325,9 @@ public class ServerSubLevelContainer extends SubLevelContainer {
         }
 
         if (this.physics != null) {
-            this.physics.getPipeline().dispose();
+            if(this.physics.close()){
+                this.physics.getPipeline().dispose();
+            }
         }
 
         try {

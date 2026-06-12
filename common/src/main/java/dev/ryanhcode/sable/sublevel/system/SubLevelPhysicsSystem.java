@@ -15,6 +15,7 @@ import dev.ryanhcode.sable.companion.math.BoundingBox3dc;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.mixinterface.plot.SubLevelContainerHolder;
 import dev.ryanhcode.sable.mixinterface.toast.SableToastableServer;
+import dev.ryanhcode.sable.physics.chunk.VoxelNeighborhoodState;
 import dev.ryanhcode.sable.physics.config.PhysicsConfigData;
 import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertyHelper;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
@@ -26,6 +27,7 @@ import dev.ryanhcode.sable.sublevel.plot.PlotChunkHolder;
 import dev.ryanhcode.sable.sublevel.plot.ServerLevelPlot;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.ryanhcode.sable.sublevel.system.ticket.PhysicsChunkTicketManager;
+import dev.ryanhcode.sable.util.LevelAccelerator;
 import it.unimi.dsi.fastutil.objects.Object2IntMap;
 import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import it.unimi.dsi.fastutil.objects.ObjectIterator;
@@ -34,6 +36,7 @@ import net.minecraft.CrashReport;
 import net.minecraft.CrashReportCategory;
 import net.minecraft.ReportedException;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.core.SectionPos;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.level.ServerLevel;
@@ -47,10 +50,12 @@ import org.jetbrains.annotations.NotNull;
 import org.joml.Math;
 import org.joml.Quaterniond;
 import org.joml.Vector3d;
+import dev.ryanhcode.sable.api.physics.PhysicsPipeline.*;
 
 import java.util.Collection;
 import java.util.Objects;
 import java.util.UUID;
+import java.util.concurrent.*;
 
 /**
  * Runs a physics pipeline on sub-levels.
@@ -69,11 +74,18 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
     /**
      * TODO: Nuke this for threading
      */
-    public static SubLevelPhysicsSystem currentlySteppingSystem;
+    private static final ThreadLocal<SubLevelPhysicsSystem> currentlySteppingSystem = new ThreadLocal<>();
     /**
      * The current physics pipeline.
      */
     private final PhysicsPipeline pipeline;
+
+    private static final ExecutorService physicsExecutor = Executors.newSingleThreadExecutor();
+
+    private Future<?> pendingPhysicsTick;
+
+    private final ConcurrentLinkedQueue<Runnable> pendingPhysicsCommands = new ConcurrentLinkedQueue<>();
+
     /**
      * The level that this system is running on.
      */
@@ -143,10 +155,14 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
     }
 
     public static SubLevelPhysicsSystem getCurrentlySteppingSystem() {
-        if (SubLevelPhysicsSystem.currentlySteppingSystem == null) {
+
+        final SubLevelPhysicsSystem system = SubLevelPhysicsSystem.currentlySteppingSystem.get();
+
+        if(system == null) {
             throw new IllegalStateException("No physics system is currently stepping");
         }
-        return SubLevelPhysicsSystem.currentlySteppingSystem;
+
+        return system;
     }
 
     /**
@@ -203,6 +219,11 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
     @Override
     public void tick(final SubLevelContainer sidelessContainer) {
         final ServerSubLevelContainer container = (ServerSubLevelContainer) sidelessContainer;
+
+        if(!this.finishPreviousPhysicsTickIfReady()) {
+            return;
+        }
+
         this.tickPunchCooldowns();
 
         this.ticketManager.update(this.level, container, this, this.pipeline, 1.0 / 20.0);
@@ -216,24 +237,66 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
 
         this.pipeline.tick();
 
-        if (!this.paused) {
-            SubLevelPhysicsSystem.currentlySteppingSystem = this;
 
-            // tick the pipeline physics
-            try {
-                this.tickPipelinePhysics(container);
-            } catch (final Exception e) {
-                final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics");
-                final CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
-                crashReportCategory.setDetail("Dimension", this.level.dimension());
-                throw new ReportedException(crashReport);
-            }
+        if(!this.paused) {
+            this.submitPhysicsTick(container);
+        }
+    }
 
-            SubLevelPhysicsSystem.currentlySteppingSystem = null;
+    private boolean finishPreviousPhysicsTickIfReady(){
+        if(this.pendingPhysicsTick == null){
+            return true;
+        }
+
+        if(!this.pendingPhysicsTick.isDone()) {
+            return false;
+        }
+
+        try{
+            this.pendingPhysicsTick.get();
+            this.pendingPhysicsTick = null;
+            return true;
+        }
+        catch(final Exception e){
+            final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics asynchronously");
+            CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
+            crashReportCategory.setDetail("Dimension",this.level.dimension());
+            throw new ReportedException(crashReport);
+        }
+    }
+
+
+    private void submitPhysicsTick(final ServerSubLevelContainer container) {
+        this.pendingPhysicsTick = physicsExecutor.submit(() -> this.runPipelinePhysicsWithCrashReport((container)));
+    }
+
+    private void runPipelinePhysicsWithCrashReport(final ServerSubLevelContainer container){
+        SubLevelPhysicsSystem.currentlySteppingSystem.set(this);
+
+        try{
+            this.tickPipelinePhysics(container);
+        }
+        catch(final Exception e){
+            final CrashReport crashReport = CrashReport.forThrowable(e, "Sable ticking physics");
+            final CrashReportCategory crashReportCategory = crashReport.addCategory("Current physics state");
+            crashReportCategory.setDetail("Dimension", this.level.dimension());
+            throw new ReportedException(crashReport);
+        }
+        finally{
+            SubLevelPhysicsSystem.currentlySteppingSystem.remove();
+        }
+    }
+
+    private void drainPhysicsCommands(){
+        Runnable command;
+        while((command = this.pendingPhysicsCommands.poll()) != null){
+            command.run();
         }
     }
 
     private void tickPipelinePhysics(final ServerSubLevelContainer container) {
+        this.drainPhysicsCommands();
+
         this.pipeline.prePhysicsTicks();
 
         for (this.currentSubstep = 0; this.currentSubstep < this.config.substepsPerTick; this.currentSubstep++) {
@@ -261,6 +324,7 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
                 subLevel.applyQueuedForces(this, this.getPhysicsHandle(subLevel), substepTimeStep);
             }
 
+            this.pipeline.updateContraptionPoses();
             this.pipeline.physicsTick(substepTimeStep);
 
             // if any blocks were modified due to, say, fragile blocks breaking
@@ -448,9 +512,30 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
 
         this.updateMassDataFromBlockChange(subLevel, globalBlockPos, oldState, newState, true);
 
-        this.pipeline.handleBlockChange(sectionPos, section, localX, localY, localZ, oldState, newState);
+        final BlockPhysicsUpdate[] updates = this.captureBlockPhysicsUpdates(globalBlockPos, newState);
+        this.pendingPhysicsCommands.add(() -> this.pipeline.handleBlockPhysicsUpdates(updates));
 
         this.wakeUpObjectsAt(x, y, z);
+    }
+
+    private BlockPhysicsUpdate[] captureBlockPhysicsUpdates(final BlockPos globalBlockPos, final BlockState newState) {
+        final LevelAccelerator accelerator = new LevelAccelerator(this.level);
+        final Direction[] directions = Direction.values();
+        final BlockPhysicsUpdate[] updates = new BlockPhysicsUpdate[directions.length + 1];
+
+        int index = 0;
+        for(final Direction direction : directions){
+            final BlockPos pos = globalBlockPos.relative(direction);
+            final BlockState blockState = accelerator.getBlockState(pos);
+            final VoxelNeighborhoodState neighborhoodState = VoxelNeighborhoodState.getState(accelerator,pos,null);
+
+            updates[index++] = new BlockPhysicsUpdate(pos.getX(),pos.getY(),pos.getZ(),blockState, neighborhoodState);
+        }
+
+        final VoxelNeighborhoodState centerNeighborhoodState = VoxelNeighborhoodState.getState(accelerator,globalBlockPos,null);
+        updates[index] = new BlockPhysicsUpdate(globalBlockPos.getX(),globalBlockPos.getY(),globalBlockPos.getZ(),newState, centerNeighborhoodState);
+
+        return updates;
     }
 
     /**
@@ -596,5 +681,40 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      */
     public int getNextRuntimeID() {
         return this.pipeline.getNextRuntimeID();
+    }
+
+    public boolean close() {
+        try{
+            if(this.pendingPhysicsTick != null){
+                this.pendingPhysicsTick.get(5, TimeUnit.SECONDS);
+            }
+            return true;
+        }
+        catch (final InterruptedException e){
+            Thread.currentThread().interrupt();
+            return false;
+        }
+        catch (final ExecutionException e){
+            Sable.LOGGER.error("Physics worker failed while closing", e.getCause());
+            return true;
+        }
+        catch (final TimeoutException e){
+            Sable.LOGGER.error("Timed out waiting for Physics worker to close",e);
+            return false;
+        }
+    }
+
+    public static void shutdownPhysicsExecutor(){
+        try{
+            physicsExecutor.shutdown();
+            if(!physicsExecutor.awaitTermination(5,TimeUnit.SECONDS)){
+                Sable.LOGGER.error("Timed out waiting for shared physics executor to stop");
+                physicsExecutor.shutdownNow();
+            }
+        }
+        catch (final InterruptedException e){
+            physicsExecutor.shutdownNow();
+            Thread.currentThread().interrupt();
+        }
     }
 }

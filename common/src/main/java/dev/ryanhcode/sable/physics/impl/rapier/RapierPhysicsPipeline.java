@@ -148,11 +148,10 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
      */
     @Override
     public void physicsTick(final double timeStep) {
-        this.updateContraptionPoses();
         Rapier3D.step(this.sceneId, timeStep);
     }
 
-    private void updateContraptionPoses() {
+    public void updateContraptionPoses() {
         for (final KinematicContraption contraption : this.activeContraptions.keySet()) {
             final TrackedKinematicContraption trackedContraption = this.activeContraptions.get(contraption);
             final SubLevelPhysicsSystem system = SubLevelPhysicsSystem.require(this.level);
@@ -495,36 +494,19 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
     }
 
     /**
-     * Handles the change of a block (from oldState to newState) in a chunk at chunk-relative position x, y, z.
-     * Only called server-side.
+     * Applies captured block collider updates to the Rapier voxel world
+     * Only called server-side on the physics worker thread.
      *
-     * @param x chunk-relative x position
-     * @param y chunk-relative y position
-     * @param z chunk-relative z position
+     * @param updates Array of 7 block physics updates. One in the center and 6 for each block adjacent
      */
     @Override
-    public void handleBlockChange(final SectionPos sectionPos, final LevelChunkSection chunk, int x, int y, int z, final BlockState oldState, final BlockState newState) {
-        x = (sectionPos.x() << 4) + x;
-        y = (sectionPos.y() << 4) + y;
-        z = (sectionPos.z() << 4) + z;
-
-        final BlockPos globalBlockPos = new BlockPos(x, y, z);
-
-        for (final Direction dir : Direction.values()) {
-            final BlockPos pos = globalBlockPos.relative(dir);
-            final VoxelNeighborhoodState state = VoxelNeighborhoodState.getState(this.accelerator, pos, null);
-            final RapierVoxelColliderData colliderData = this.colliderBakery.getPhysicsDataForBlock(this.level.getBlockState(pos));
-
+    public void handleBlockPhysicsUpdates(final BlockPhysicsUpdate[] updates){
+        for(final BlockPhysicsUpdate update : updates){
+            final RapierVoxelColliderData colliderData = this.colliderBakery.getPhysicsDataForBlock(update.state());
             final int colliderValue = colliderData == null ? 0 : colliderData.handle() + 1;
-            Rapier3D.changeBlock(this.sceneId, pos.getX(), pos.getY(), pos.getZ(), packBlockState(state, colliderValue));
+
+            Rapier3D.changeBlock(this.sceneId,update.x(),update.y(),update.z(), packBlockState(update.neighborhoodState(),colliderValue));
         }
-
-        // do it for the block without offset
-        final VoxelNeighborhoodState state = VoxelNeighborhoodState.getState(this.accelerator, globalBlockPos, null);
-        final RapierVoxelColliderData colliderData = this.colliderBakery.getPhysicsDataForBlock(newState);
-
-        final int colliderValue = colliderData == null ? 0 : colliderData.handle() + 1;
-        Rapier3D.changeBlock(this.sceneId, x, y, z, packBlockState(state, colliderValue));
     }
 
     @Override

@@ -9,6 +9,7 @@ import dev.ryanhcode.sable.api.physics.object.rope.RopePhysicsObject;
 import dev.ryanhcode.sable.api.sublevel.KinematicContraption;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.companion.math.Pose3dc;
+import dev.ryanhcode.sable.physics.chunk.VoxelNeighborhoodState;
 import dev.ryanhcode.sable.physics.config.PhysicsConfigData;
 import dev.ryanhcode.sable.sublevel.ServerSubLevel;
 import dev.ryanhcode.sable.sublevel.SubLevel;
@@ -50,6 +51,9 @@ public interface PhysicsPipeline {
      *
      * @param timeStep the time step of this physics substep ({@code 1.0 / 20.0 / substeps}) [s]
      */
+
+    default void updateContraptionPoses(){}
+
     void physicsTick(double timeStep);
 
     /**
@@ -129,7 +133,7 @@ public interface PhysicsPipeline {
      * @param z chunk-relative z position
      * @param y chunk-relative y position
      */
-    void handleBlockChange(SectionPos sectionPos, LevelChunkSection chunk, int x, int y, int z, BlockState oldState, BlockState newState);
+    default void handleBlockChange(final SectionPos sectionPos, final LevelChunkSection chunk, final int x, final int y, final int z, final BlockState oldState, final BlockState newState) {};
 
     /**
      * Called to re-upload center of mass, mass properties, and local bounds to the physics pipeline
@@ -205,6 +209,16 @@ public interface PhysicsPipeline {
     default Vector3d getAngularVelocity(final PhysicsPipelineBody body, final Vector3d dest) {
         return dest.zero();
     }
+
+    record BlockPhysicsUpdate(
+            int x,
+            int y,
+            int z,
+            BlockState state,
+            VoxelNeighborhoodState neighborhoodState
+    ){}
+
+    default void handleBlockPhysicsUpdates(final BlockPhysicsUpdate[] updates){}
 
     /**
      * "Wakes up" a physics pipeline body, indicating environmental or other changes have occurred that should resume physics if idled or sleeping

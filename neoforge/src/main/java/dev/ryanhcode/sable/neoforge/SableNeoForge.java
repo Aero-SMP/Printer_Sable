@@ -9,6 +9,7 @@ import dev.ryanhcode.sable.index.SableAttributes;
 import dev.ryanhcode.sable.physics.config.FloatingBlockMaterialDataHandler;
 import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertiesDefinitionLoader;
 import dev.ryanhcode.sable.physics.config.dimension_physics.DimensionPhysicsData;
+import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.entity.ai.attributes.Attribute;
 import net.neoforged.bus.api.IEventBus;
@@ -21,6 +22,7 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.AddReloadListenerEvent;
 import net.neoforged.neoforge.event.OnDatapackSyncEvent;
 import net.neoforged.neoforge.event.RegisterCommandsEvent;
+import net.neoforged.neoforge.event.server.ServerStoppedEvent;
 import net.neoforged.neoforge.registries.DeferredRegister;
 
 @Mod(Sable.MOD_ID)
@@ -33,6 +35,7 @@ public final class SableNeoForge {
         neoBus.addListener(this::registerReloadListeners);
         modBus.addListener(this::serverSetup);
         neoBus.addListener(this::syncDataPack);
+        neoBus.addListener(this::serverStopped);
 
         SubLevelSelectorModifiers.registerModifiers();
 
@@ -44,6 +47,10 @@ public final class SableNeoForge {
         modContainer.registerConfig(ModConfig.Type.COMMON, SableConfig.SPEC);
 
         CrashReportCallables.registerHeader(Sable::getCrashHeader);
+    }
+
+    private void serverStopped(final ServerStoppedEvent event) {
+        SubLevelPhysicsSystem.shutdownPhysicsExecutor();
     }
 
     public void registerReloadListeners(final AddReloadListenerEvent event) {
