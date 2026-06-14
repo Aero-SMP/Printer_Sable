@@ -4,6 +4,7 @@ import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.SableConfig;
 import dev.ryanhcode.sable.api.block.BlockEntitySubLevelActor;
 import dev.ryanhcode.sable.api.physics.PhysicsPipeline;
+import dev.ryanhcode.sable.api.physics.PhysicsPipelineProvider;
 import dev.ryanhcode.sable.api.physics.handle.RigidBodyHandle;
 import dev.ryanhcode.sable.api.physics.mass.MassTracker;
 import dev.ryanhcode.sable.api.physics.object.ArbitraryPhysicsObject;
@@ -67,6 +68,10 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      */
     public static final boolean USE_TICKETS_FOR_QUERIES = false;
     /**
+     * If we are currently inside a physics step
+     */
+    public static boolean IN_PHYSICS_STEP = false;
+    /**
      * TODO: Nuke this for threading
      */
     public static SubLevelPhysicsSystem currentlySteppingSystem;
@@ -113,7 +118,9 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      */
     public SubLevelPhysicsSystem(final ServerLevel level) {
         this.level = level;
-        this.pipeline = Sable.createPhysicsPipeline(this.level);
+
+        Sable.LOGGER.info("Creating physics pipeline for {} using {}", level.dimension(), PhysicsPipelineProvider.INSTANCE.getClass().getSimpleName());
+        this.pipeline = PhysicsPipelineProvider.INSTANCE.createPipeline(level);
     }
 
     /**
@@ -175,6 +182,7 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
     @Override
     public void onSubLevelAdded(final SubLevel subLevel) {
         if (subLevel instanceof final ServerSubLevel serverSubLevel) {
+            serverSubLevel.buildMassTracker();
             this.pipeline.add(serverSubLevel, serverSubLevel.logicalPose());
         } else {
             throw new UnsupportedOperationException("Client sub-levels are not supported by the physics system. How did we end up here?");
@@ -261,7 +269,9 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
                 subLevel.applyQueuedForces(this, this.getPhysicsHandle(subLevel), substepTimeStep);
             }
 
+            IN_PHYSICS_STEP = true;
             this.pipeline.physicsTick(substepTimeStep);
+            IN_PHYSICS_STEP = false;
 
             // if any blocks were modified due to, say, fragile blocks breaking
             // sub-levels could have been removed during the physics tick
@@ -348,6 +358,8 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         // The sub-level has NaN'ed!
         // We need to remove it and re-add from the physics world.
         this.pipeline.remove(serverSubLevel);
+
+        serverSubLevel.buildMassTracker();
         this.pipeline.add(serverSubLevel, serverSubLevel.logicalPose());
 
         if (serverSubLevel.getMassTracker().getCenterOfMass() == null) {
@@ -446,8 +458,7 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         final SubLevel subLevel = Sable.HELPER.getContaining(this.level, sectionPos);
         final BlockPos globalBlockPos = new BlockPos(x, y, z);
 
-        this.updateMassDataFromBlockChange(subLevel, globalBlockPos, oldState, newState, true);
-
+        this.updateMassDataFromBlockChange(subLevel, globalBlockPos, oldState, newState, !IN_PHYSICS_STEP);
         this.pipeline.handleBlockChange(sectionPos, section, localX, localY, localZ, oldState, newState);
 
         this.wakeUpObjectsAt(x, y, z);
@@ -468,11 +479,16 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
 
         for (final SubLevel intersectingSubLevel : intersectingSubLevels) {
             if (intersectingSubLevel instanceof final ServerSubLevel intersectingServerSubLevel) {
+                if (intersectingServerSubLevel.isRemoved())
+                    continue;
+
                 this.pipeline.wakeUp(intersectingServerSubLevel);
             }
         }
 
-        if (this.arbitraryObjects.isEmpty()) return;
+        if (this.arbitraryObjects.isEmpty())
+            return;
+
         final BoundingBox3d objectBounds = new BoundingBox3d();
         for (final ArbitraryPhysicsObject object : this.arbitraryObjects) {
             object.getBoundingBox(objectBounds);
