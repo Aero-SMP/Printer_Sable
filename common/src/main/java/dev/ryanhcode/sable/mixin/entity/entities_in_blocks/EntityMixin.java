@@ -1,6 +1,7 @@
 package dev.ryanhcode.sable.mixin.entity.entities_in_blocks;
 
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.api.SubLevelHelper;
 import dev.ryanhcode.sable.companion.math.BoundingBox3d;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.CrashReport;
@@ -52,13 +53,17 @@ public abstract class EntityMixin {
                             if (!this.isAlive()) {
                                 return;
                             }
-
                             mutableBlockPos.set(i, j, k);
                             final BlockState blockState = this.level.getBlockState(mutableBlockPos);
-
                             try {
-                                blockState.entityInside(this.level, mutableBlockPos, (Entity) (Object) this);
-                                this.onInsideBlock(blockState);
+                                SubLevelHelper.pushEntityLocal(intersecting,(Entity) (Object) this);
+                                try{
+                                    blockState.entityInside(this.level, mutableBlockPos, (Entity) (Object) this);
+                                    this.onInsideBlock(blockState);
+                                }
+                                finally {
+                                    SubLevelHelper.popEntityLocal(intersecting,(Entity) (Object) this);
+                                }
                             } catch (final Throwable var12) {
                                 final CrashReport crashReport = CrashReport.forThrowable(var12, "Colliding entity with block");
                                 final CrashReportCategory crashReportCategory = crashReport.addCategory("Block being collided with");
