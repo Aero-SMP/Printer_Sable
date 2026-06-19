@@ -1,6 +1,7 @@
 package dev.ryanhcode.sable.mixin.entity.entity_kicking;
 
 import dev.ryanhcode.sable.Sable;
+import dev.ryanhcode.sable.api.SubLevelAssemblyHelper;
 import dev.ryanhcode.sable.api.SubLevelHelper;
 import dev.ryanhcode.sable.sublevel.SubLevel;
 import net.minecraft.core.BlockPos;
@@ -27,6 +28,11 @@ public abstract class BlockMixin {
 
     @Inject(method = "popResource(Lnet/minecraft/world/level/Level;Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/item/ItemStack;)V", at = @At(value = "INVOKE", target = "Lnet/minecraft/world/level/block/Block;popResource(Lnet/minecraft/world/level/Level;Ljava/util/function/Supplier;Lnet/minecraft/world/item/ItemStack;)V", shift = At.Shift.BEFORE), locals = LocalCapture.CAPTURE_FAILHARD, cancellable = true)
     private static void sable$popResourceFromFace(final Level level, final BlockPos blockPos, final ItemStack itemStack, final CallbackInfo ci, final double yOffset, final double x, final double y, final double z) {
+        if(SubLevelAssemblyHelper.isMovingBlock(level,blockPos)){
+            ci.cancel();
+            return;
+        }
+
         final SubLevel subLevel = Sable.HELPER.getContaining(level, blockPos);
 
         if (subLevel != null) {

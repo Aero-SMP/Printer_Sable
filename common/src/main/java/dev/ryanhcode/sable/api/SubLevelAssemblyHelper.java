@@ -57,6 +57,21 @@ import java.util.*;
  */
 public class SubLevelAssemblyHelper {
 
+    private static final ThreadLocal<Map<Level, Set<BlockPos>>> MOVING_BLOCKS = ThreadLocal.withInitial(IdentityHashMap::new);
+
+    public static boolean isMovingBlock(final Level level, final BlockPos pos) {
+        final Set<BlockPos> positions = MOVING_BLOCKS.get().get(level);
+        return positions != null && positions.contains(pos);
+    }
+
+    public static void markMovingBlock(final Level level, final BlockPos pos){
+        MOVING_BLOCKS.get().computeIfAbsent(level, ignored -> new HashSet<>()).add(pos.immutable());
+    }
+
+    private static void clearMovingBlocks(){
+        MOVING_BLOCKS.get().clear();
+    }
+
     /**
      * Assembles a collection of blocks into a sub-level.
      *
@@ -292,132 +307,150 @@ public class SubLevelAssemblyHelper {
 
         final List<BlockState> states = new ArrayList<>();
 
-        // Get minimum and maximum chunk positions (like a chunk bounding box)
-        BlockPos firstBlock = null;
-        Vector2i chunkBoundsMin = null;
-        Vector2i chunkBoundsMax = null;
-        for (final BlockPos block : blocks) {
-            if (firstBlock == null) {
-                firstBlock = block;
-            }
-            final ChunkPos chunk = new ChunkPos(transform.apply(block));
-
-            final Vector2i jomlChunkPos = new Vector2i(chunk.x, chunk.z);
-            if (chunkBoundsMin == null) {
-                chunkBoundsMin = new Vector2i(jomlChunkPos);
-                chunkBoundsMax = new Vector2i(jomlChunkPos);
-            }
-
-            chunkBoundsMin.min(jomlChunkPos);
-            chunkBoundsMax.max(jomlChunkPos);
+        final List<BlockPos> sourcePositions = new ArrayList<>();
+        for (final BlockPos block : blocks){
+            sourcePositions.add(block.immutable());
         }
 
-        // Create plot chunks if they don't exist
-        final SubLevel subLevel = Sable.HELPER.getContaining(level, transform.apply(firstBlock));
-        if (subLevel != null) {
-            final LevelPlot plot = subLevel.getPlot();
+        try{
+            // Mark blocks I'm about to move as moving blocks
+            for(final BlockPos sourcePos : sourcePositions){
+                markMovingBlock(level,sourcePos);
+                markMovingBlock(resultingLevel,transform.apply(sourcePos));
+            }
 
-            for (int chunkX = chunkBoundsMin.x; chunkX <= chunkBoundsMax.x; chunkX++) {
-                for (int chunkZ = chunkBoundsMin.y; chunkZ <= chunkBoundsMax.y; chunkZ++) {
-                    if (plot.getChunkHolder(plot.toLocal(new ChunkPos(chunkX, chunkZ))) == null) {
-                        plot.newEmptyChunk(new ChunkPos(chunkX, chunkZ));
+            // Get minimum and maximum chunk positions (like a chunk bounding box)
+            BlockPos firstBlock = null;
+            Vector2i chunkBoundsMin = null;
+            Vector2i chunkBoundsMax = null;
+            for (final BlockPos block : sourcePositions) {
+                if (firstBlock == null) {
+                    firstBlock = block;
+                }
+                final ChunkPos chunk = new ChunkPos(transform.apply(block));
+
+                final Vector2i jomlChunkPos = new Vector2i(chunk.x, chunk.z);
+                if (chunkBoundsMin == null) {
+                    chunkBoundsMin = new Vector2i(jomlChunkPos);
+                    chunkBoundsMax = new Vector2i(jomlChunkPos);
+                }
+
+                chunkBoundsMin.min(jomlChunkPos);
+                chunkBoundsMax.max(jomlChunkPos);
+            }
+
+            // Create plot chunks if they don't exist
+            final SubLevel subLevel = Sable.HELPER.getContaining(level, transform.apply(firstBlock));
+            if (subLevel != null) {
+                final LevelPlot plot = subLevel.getPlot();
+
+                for (int chunkX = chunkBoundsMin.x; chunkX <= chunkBoundsMax.x; chunkX++) {
+                    for (int chunkZ = chunkBoundsMin.y; chunkZ <= chunkBoundsMax.y; chunkZ++) {
+                        if (plot.getChunkHolder(plot.toLocal(new ChunkPos(chunkX, chunkZ))) == null) {
+                            plot.newEmptyChunk(new ChunkPos(chunkX, chunkZ));
+                        }
                     }
                 }
             }
-        }
 
-        // Copy source blocks to destination
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
-        for (final BlockPos block : blocks) {
-            final BlockState state = accelerator.getBlockState(block);
-            final BlockPos newPos = transform.apply(block);
+            // Copy source blocks to destination
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
+            for (final BlockPos block : sourcePositions) {
+                final BlockState state = accelerator.getBlockState(block);
+                final BlockPos newPos = transform.apply(block);
 
-            try {
-                final BlockState destinationState = transform.apply(state);
+                try {
+                    final BlockState destinationState = transform.apply(state);
 
-                if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
-                    listener.beforeMove(level, resultingLevel, state, block, newPos);
+                    if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
+                        listener.beforeMove(level, resultingLevel, state, block, newPos);
+                    }
+
+                    final BlockEntity blockEntity = level.getBlockEntity(block);
+
+                    CompoundTag tag = null;
+
+                    if (blockEntity != null) {
+                        tag = blockEntity.saveWithFullMetadata(level.registryAccess());
+
+                        tag.putInt("x", newPos.getX());
+                        tag.putInt("y", newPos.getY());
+                        tag.putInt("z", newPos.getZ());
+                    }
+
+                    if (blockEntity instanceof final RandomizableContainer container) {
+                        container.setLootTable(null);
+                    }
+                    if (blockEntity instanceof final Clearable clearable) {
+                        clearable.clearContent();
+                    }
+
+                    final LevelChunk chunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(newPos.getX()), SectionPos.blockToSectionCoord(newPos.getZ()));
+
+                    chunk.setBlockState(newPos, destinationState, true);
+                    states.add(destinationState);
+
+                    final BlockEntity newBlockEntity = resultingLevel.getBlockEntity(newPos);
+
+                    if (newBlockEntity != null && tag != null) {
+                        newBlockEntity.loadWithComponents(tag, level.registryAccess());
+                    }
+
+                    if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
+                        listener.afterMove(level, resultingLevel, state, block, newPos);
+                    }
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to move block {} at {} to {}", state, block, newPos, e);
+                }
+            }
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
+
+            // Delete source blocks
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level, true);
+            for (final BlockPos sourcePos : sourcePositions) {
+                final BlockState newSourceState = Blocks.AIR.defaultBlockState();
+
+                try {
+                    final LevelChunk chunk = accelerator.getChunk(SectionPos.blockToSectionCoord(sourcePos.getX()),
+                            SectionPos.blockToSectionCoord(sourcePos.getZ()));
+
+                    final BlockEntity sourceBlockEntity = level.getBlockEntity(sourcePos);
+                    if(sourceBlockEntity != null){
+                        level.removeBlockEntity(sourcePos);
+                    }
+                    chunk.setBlockState(sourcePos, newSourceState, true);
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to destroy old block during assembly {}", sourcePos, e);
+                }
+            }
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level, false);
+
+            // Mark and notify destination blocks
+            int i = 0;
+            for (final BlockPos untransformed : sourcePositions) {
+                final BlockPos pos = transform.apply(untransformed);
+
+                try {
+                    final LevelChunk levelchunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
+                    final BlockState destinationState = states.get(i);
+                    SubLevelAssemblyHelper.markAndNotifyBlock(resultingLevel, pos, levelchunk, Blocks.AIR.defaultBlockState(), destinationState, Block.UPDATE_CLIENTS | Block.UPDATE_KNOWN_SHAPE, 512);
+                } catch (final Exception e) {
+                    Sable.LOGGER.error("Failed to mark & notify block {} (untransformed = {})", pos, untransformed, e);
                 }
 
-                final BlockEntity blockEntity = level.getBlockEntity(block);
+                i++;
+            }
 
-                CompoundTag tag = null;
-
-                if (blockEntity != null) {
-                    tag = blockEntity.saveWithFullMetadata(level.registryAccess());
-
-                    tag.putInt("x", newPos.getX());
-                    tag.putInt("y", newPos.getY());
-                    tag.putInt("z", newPos.getZ());
-                }
-
-                if (blockEntity instanceof final RandomizableContainer container) {
-                    container.setLootTable(null);
-                }
-                if (blockEntity instanceof final Clearable clearable) {
-                    clearable.clearContent();
-                }
-
-                final LevelChunk chunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(newPos.getX()), SectionPos.blockToSectionCoord(newPos.getZ()));
-
-                chunk.setBlockState(newPos, destinationState, true);
-                states.add(destinationState);
-
-                final BlockEntity newBlockEntity = resultingLevel.getBlockEntity(newPos);
-
-                if (newBlockEntity != null && tag != null) {
-                    newBlockEntity.loadWithComponents(tag, level.registryAccess());
-                }
-
-                if (state.getBlock() instanceof final BlockSubLevelAssemblyListener listener) {
-                    listener.afterMove(level, resultingLevel, state, block, newPos);
-                }
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to move block {} at {} to {}", state, block, newPos, e);
+            // Notify clients about source block state change
+            for (final BlockPos block : sourcePositions) {
+                final BlockState sourceState = Blocks.AIR.defaultBlockState();
+                level.sendBlockUpdated(block, Blocks.STONE.defaultBlockState(), sourceState, 3);
             }
         }
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
-
-        // Mark and notify destination blocks
-        int i = 0;
-        for (final BlockPos untransformed : blocks) {
-            final BlockPos pos = transform.apply(untransformed);
-
-            try {
-                final LevelChunk levelchunk = resultingAccelerator.getChunk(SectionPos.blockToSectionCoord(pos.getX()), SectionPos.blockToSectionCoord(pos.getZ()));
-                final BlockState destinationState = states.get(i);
-                SubLevelAssemblyHelper.markAndNotifyBlock(resultingLevel, pos, levelchunk, Blocks.AIR.defaultBlockState(), destinationState, 3, 512);
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to mark & notify block {} (untransformed = {})", pos, untransformed, e);
-            }
-
-            i++;
-        }
-
-        // Delete source blocks
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, true);
-        for (final BlockPos sourceBlockPos : blocks) {
-            final BlockState newSourceState = Blocks.AIR.defaultBlockState();
-
-            try {
-                final LevelChunk chunk = accelerator.getChunk(SectionPos.blockToSectionCoord(sourceBlockPos.getX()),
-                        SectionPos.blockToSectionCoord(sourceBlockPos.getZ()));
-
-                final BlockEntity sourceBlockEntity = level.getBlockEntity(sourceBlockPos);
-                if(sourceBlockEntity != null){
-                    level.removeBlockEntity(sourceBlockPos);
-                }
-                chunk.setBlockState(sourceBlockPos, newSourceState, true);
-            } catch (final Exception e) {
-                Sable.LOGGER.error("Failed to destroy old block during assembly {}", sourceBlockPos, e);
-            }
-        }
-        SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel, false);
-
-        // Notify clients about source block state change
-        for (final BlockPos block : blocks) {
-            final BlockState sourceState = Blocks.AIR.defaultBlockState();
-            resultingLevel.sendBlockUpdated(block, Blocks.STONE.defaultBlockState(), sourceState, 3);
+        finally {
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(level,false);
+            SableAssemblyPlatform.INSTANCE.setIgnoreOnPlace(resultingLevel,false);
+            clearMovingBlocks();
         }
     }
 
@@ -429,19 +462,19 @@ public class SubLevelAssemblyHelper {
                 level.setBlocksDirty(pPos, oldState, worldState);
             }
 
-            if ((pFlags & 2) != 0 && levelchunk.getFullStatus() != null && levelchunk.getFullStatus().isOrAfter(FullChunkStatus.BLOCK_TICKING)) {
+            if ((pFlags & Block.UPDATE_CLIENTS) != 0 && levelchunk.getFullStatus() != null && levelchunk.getFullStatus().isOrAfter(FullChunkStatus.BLOCK_TICKING)) {
                 level.sendBlockUpdated(pPos, oldState, newState, pFlags);
             }
 
-            if ((pFlags & 1) != 0) {
+            if ((pFlags & Block.UPDATE_NEIGHBORS) != 0) {
                 level.blockUpdated(pPos, oldState.getBlock());
                 if (newState.hasAnalogOutputSignal()) {
                     level.updateNeighbourForOutputSignal(pPos, block);
                 }
             }
 
-            if ((pFlags & 16) == 0 && pRecursionLeft > 0) {
-                final int i = pFlags & -34;
+            if ((pFlags & Block.UPDATE_KNOWN_SHAPE) == 0 && pRecursionLeft > 0) {
+                final int i = pFlags & ~(Block.UPDATE_SUPPRESS_DROPS | Block.UPDATE_NEIGHBORS);
                 oldState.updateIndirectNeighbourShapes(level, pPos, i, pRecursionLeft - 1);
                 newState.updateNeighbourShapes(level, pPos, i, pRecursionLeft - 1);
                 newState.updateIndirectNeighbourShapes(level, pPos, i, pRecursionLeft - 1);
