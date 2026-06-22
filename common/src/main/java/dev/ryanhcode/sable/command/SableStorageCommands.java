@@ -2,6 +2,7 @@ package dev.ryanhcode.sable.command;
 
 import com.mojang.brigadier.arguments.StringArgumentType;
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import dev.ryanhcode.sable.Sable;
 import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.companion.math.Pose3d;
 import dev.ryanhcode.sable.sublevel.storage.holding.GlobalSavedSubLevelPointer;
@@ -24,7 +25,9 @@ import org.joml.Vector3dc;
 
 import java.io.File;
 import java.util.Formatter;
+import java.util.Iterator;
 import java.util.Locale;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SableStorageCommands {
 
@@ -65,9 +68,29 @@ public class SableStorageCommands {
                                             final SubLevelHoldingChunk holdingChunk = storage.attemptLoadHoldingChunk(chunkPos);
                                             if (holdingChunk == null) continue;
 
-                                            for (final SavedSubLevelPointer pointer : holdingChunk.getSubLevelPointers()) {
-                                                final SubLevelData data = storage.attemptLoadSubLevel(chunkPos, pointer);
+                                            final Iterator<SavedSubLevelPointer> iterator = holdingChunk.getSubLevelPointers().iterator();
+                                            final AtomicBoolean removedStalePointer = new AtomicBoolean(false);
+
+                                            while(iterator.hasNext()){
+                                                final SavedSubLevelPointer pointer = iterator.next();
+
+
+                                                final SubLevelData data = storage.attemptLoadSubLevel(chunkPos, pointer,
+                                                        (missingChunkPos, missingPointer)->{
+                                                            Sable.LOGGER.warn("Tried to log sub-level for pointer {} but failed to read it from disk",missingPointer);
+                                                            iterator.remove();
+                                                            removedStalePointer.set(true);
+                                                            return true;
+                                                        });
+
+                                                if(data == null){
+                                                    continue;
+                                                }
                                                 logFoundSubLevel(pointer, data, chunkPos, source, level);
+                                            }
+
+                                            if(removedStalePointer.get()){
+                                                storage.attemptSaveHoldingChunk(chunkPos,holdingChunk);
                                             }
                                         }
                                     }
@@ -112,15 +135,33 @@ public class SableStorageCommands {
                                             final SubLevelHoldingChunk holdingChunk = storage.attemptLoadHoldingChunk(chunkPos);
                                             if (holdingChunk == null) continue;
 
-                                            for (final SavedSubLevelPointer pointer : holdingChunk.getSubLevelPointers()) {
-                                                final SubLevelData data = storage.attemptLoadSubLevel(chunkPos, pointer);
+                                            final Iterator<SavedSubLevelPointer> iterator = holdingChunk.getSubLevelPointers().iterator();
+                                            final AtomicBoolean removedStalePointer = new AtomicBoolean(false);
 
+                                            while(iterator.hasNext()){
+                                                final SavedSubLevelPointer pointer = iterator.next();
+
+                                                final SubLevelData data = storage.attemptLoadSubLevel(chunkPos, pointer,
+                                                        (missingChunkPos, missingPointer)->{
+                                                            Sable.LOGGER.warn("Tried to check name for sub-level with pointer {} but failed to read it from disk",missingPointer);
+                                                            iterator.remove();
+                                                            removedStalePointer.set(true);
+                                                            return true;
+                                                        });
+
+                                                if(data == null){
+                                                    continue;
+                                                }
                                                 final String name = data.fullTag().contains("display_name")
                                                         ? data.fullTag().getString("display_name")
                                                         : data.uuid().toString();
                                                 if (name != null && name.equals(nameArgument)) {
                                                     logFoundSubLevel(pointer, data, chunkPos, source, level);
                                                 }
+                                            }
+
+                                            if(removedStalePointer.get()){
+                                                storage.attemptSaveHoldingChunk(chunkPos,holdingChunk);
                                             }
                                         }
                                     }

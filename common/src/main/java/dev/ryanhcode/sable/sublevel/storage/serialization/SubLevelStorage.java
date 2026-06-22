@@ -17,6 +17,7 @@ import org.jetbrains.annotations.NotNull;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.Objects;
 
 /**
  * Manages the sub-level holding chunks and regions for a level
@@ -98,8 +99,12 @@ public class SubLevelStorage implements AutoCloseable {
             regionFile.trySave(chunkPos.getRegionLocalX(), chunkPos.getRegionLocalZ(), holdingChunk);
         } catch (final IOException e) {
             Sable.LOGGER.error("Failed to save holding chunk for {}", chunkPos, e);
-
         }
+    }
+
+    @FunctionalInterface
+    public interface MissingSubLevelPointerHandler{
+        boolean removeMissingPointer(ChunkPos chunkPos, SavedSubLevelPointer pointer);
     }
 
     /**
@@ -108,13 +113,23 @@ public class SubLevelStorage implements AutoCloseable {
      * @param chunkPos the chunk position to load the sub-level from
      * @param pointer  the pointer to the sub-level in the storage file
      */
-    public SubLevelData attemptLoadSubLevel(final ChunkPos chunkPos, final SavedSubLevelPointer pointer) {
+    public SubLevelData attemptLoadSubLevel(final ChunkPos chunkPos, final SavedSubLevelPointer pointer, final MissingSubLevelPointerHandler missingSubLevelPointerHandler) {
+        Objects.requireNonNull(missingSubLevelPointerHandler,"missingSubLevelPointerHandler");
+
         try {
             final SubLevelStorageFile storageFile = this.getRegionStorageFile(chunkPos, pointer.storageIndex());
             final CompoundTag tag = storageFile.read(pointer.subLevelIndex());
 
             if (tag == null) {
-                Sable.LOGGER.error("Couldn't find sub-level at index {} in storage file for chunk {}", pointer.subLevelIndex(), chunkPos);
+                Sable.LOGGER.warn("Couldn't find sub-level at index {} in at chunk position {}. Attempting to remove pointer...", pointer.subLevelIndex(), chunkPos);
+
+                if(missingSubLevelPointerHandler.removeMissingPointer(chunkPos, pointer)){
+                    Sable.LOGGER.info("Successfully removed sub-level pointer {} at chunk position {}!",pointer,chunkPos);
+                }
+                else{
+                    Sable.LOGGER.error("Failed to remove missing sub-level pointer {} at chunk position {}",pointer,chunkPos);
+                }
+
                 return null;
             }
             final SubLevelData subLevel = SubLevelSerializer.fromData(tag);
