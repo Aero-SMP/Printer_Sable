@@ -199,10 +199,17 @@ public class SubLevelTrackingPointSavedData extends SavedData implements SubLeve
                 if (pointer != null) {
                     Sable.LOGGER.info("Player logged in with tracking point in non-loaded sub-level. Attempting to load.");
 
-                    final SubLevelData data = holdingMap.getStorage().attemptLoadSubLevel(pointer.chunkPos(), pointer.local());
+                    final SubLevelData data = holdingMap.getStorage().attemptLoadSubLevel(pointer.chunkPos(), pointer.local(), (missingChunkPos,missingPointer)->{
+                        Sable.LOGGER.warn("Failed to load sub-level at pointer {} for tracking point. The pointer has been removed and level {} will be attempt to save shortly", missingPointer, this.level);
+                        if(!remove){
+                            this.trackingPoints.remove(uuid);
+                        }
+                        this.setDirty(true);
+                        this.level.getDataStorage().save();
+                        return true;
+                    });
 
                     if (data == null) {
-                        Sable.LOGGER.warn("Failed to load sub-level at pointer {} for tracking point", point.lastSavedSubLevelPointer());
                         return null;
                     }
                     return new TakenLoginPoint(data.pose().transformPosition(new Vector3d(point.point())), data.uuid(), new Vector3d(point.point()));

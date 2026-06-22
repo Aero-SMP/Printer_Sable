@@ -31,6 +31,7 @@ import org.joml.Vector3d;
 import java.io.File;
 import java.io.IOException;
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SubLevelHoldingChunkMap implements AutoCloseable {
     public static boolean VERBOSE = false;
@@ -423,15 +424,26 @@ public class SubLevelHoldingChunkMap implements AutoCloseable {
             }
 
             final List<SavedSubLevelPointer> pointerQueue = loadedChunk.getSubLevelPointers();
-            for (final SavedSubLevelPointer pointer : pointerQueue) {
+
+            final Iterator<SavedSubLevelPointer> iterator = pointerQueue.iterator();
+            final AtomicBoolean removedStalePointer = new AtomicBoolean(false);
+
+            while (iterator.hasNext()) {
+                final SavedSubLevelPointer pointer = iterator.next();
+
                 if (VERBOSE) {
                     Sable.LOGGER.info("Attempting to read pointer at {} into sub-level data", pointer);
                 }
 
-                final SubLevelData subLevelData = this.storage.attemptLoadSubLevel(chunkPos, pointer);
+                final SubLevelData subLevelData = this.storage.attemptLoadSubLevel(chunkPos, pointer,
+                        (missingChunkPos, missingPointer)->{
+                            iterator.remove();
+                            removedStalePointer.set(true);
+                            return true;
+                        });
 
                 if (subLevelData == null) {
-                    Sable.LOGGER.error("Due to a failed storage sub-level data load, we can't add a holding sub-level for pointer {}. This will cause issues later down the line.", pointer);
+                    Sable.LOGGER.warn("Failed to add holding sub-level for pointer {}",pointer);
                     continue;
                 }
 
@@ -440,6 +452,10 @@ public class SubLevelHoldingChunkMap implements AutoCloseable {
                 final HoldingSubLevel holdingSubLevel = new HoldingSubLevel(subLevelData, globalPointer);
                 loadedChunk.acceptHoldingSubLevel(holdingSubLevel);
                 this.allHoldingSubLevels.put(holdingSubLevel.data().uuid(), holdingSubLevel);
+            }
+
+            if (removedStalePointer.get()) {
+                this.storage.attemptSaveHoldingChunk(chunkPos,loadedChunk);
             }
 
             this.loadedHoldingChunks.put(longKey, loadedChunk);
