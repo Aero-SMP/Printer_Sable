@@ -2,7 +2,23 @@ plugins {
     id 'me.modmuss50.mod-publish-plugin'
     id 'multiloader-loader'
     id 'net.neoforged.moddev'
+    id 'maven-publish'
 }
+
+publishing {
+    publications {
+        mavenJava(MavenPublication) {
+            groupId = 'dev.aerosmp'
+            artifactId = 'printer-sable-neoforge'
+            version = project.version
+            from components.java
+        }
+    }
+    repositories {
+        mavenLocal()
+    }
+}
+
 
 base{
     archivesName = "Printer_Sable-neoforge"
