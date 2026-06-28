@@ -9,6 +9,7 @@ import dev.ryanhcode.sable.sublevel.storage.SubLevelOccupancySavedData;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.ryanhcode.sable.sublevel.storage.holding.SubLevelHoldingChunkMap;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
+import dev.ryanhcode.sable.sublevel.system.SubLevelSimulationWorker;
 import dev.ryanhcode.sable.sublevel.system.SubLevelTrackingSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
@@ -45,6 +46,8 @@ public class ServerSubLevelContainer extends SubLevelContainer {
      */
     private SubLevelHoldingChunkMap holdingChunkMap;
 
+    private SubLevelSimulationWorker simulationWorker;
+
     /**
      * Creates a new sub-level container with the given side length and plot size.
      *
@@ -63,6 +66,8 @@ public class ServerSubLevelContainer extends SubLevelContainer {
      */
     public void initialize() {
         this.holdingChunkMap = new SubLevelHoldingChunkMap(this.getLevel(), this);
+        this.simulationWorker = new SubLevelSimulationWorker(this);
+        this.simulationWorker.start();
     }
 
     /**
@@ -174,6 +179,7 @@ public class ServerSubLevelContainer extends SubLevelContainer {
      */
     public void close() {
         try {
+            this.simulationWorker.close();
             this.holdingChunkMap.close();
         } catch (final Exception e) {
             Sable.LOGGER.error("Failed closing sub-level holding chunk map", e);

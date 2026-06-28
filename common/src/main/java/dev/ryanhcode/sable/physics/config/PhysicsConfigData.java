@@ -25,7 +25,9 @@ public class PhysicsConfigData {
     public int minDynamicBodiesPerIsland = 128;
 
     /**
-     * Physics ticks done per game tick in the physics pipeline.
+     * Physics ticks done per simulation tick in the physics pipeline.
      */
     public int substepsPerTick = 2;
+
+    public double simulationTicksPerSecond = 20.0;
 }

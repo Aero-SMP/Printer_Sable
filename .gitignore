@@ -138,3 +138,6 @@ runs/
 macos/*.dmg
 
 **/.intentionally-empty-file.o
+
+wiki/
+neoforge/.eclipse
