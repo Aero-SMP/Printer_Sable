@@ -4,7 +4,7 @@ import com.simibubi.create.content.kinetics.belt.BeltBlock;
 import com.simibubi.create.content.kinetics.belt.BeltBlockEntity;
 import com.simibubi.create.content.kinetics.belt.BeltSlope;
 import dev.ryanhcode.sable.api.physics.callback.BlockSubLevelCollisionCallback;
-import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
+import dev.ryanhcode.sable.api.physics.callback.LevelAwareBlockSubLevelCollisionCallback;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.core.Vec3i;
@@ -13,16 +13,13 @@ import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Vector3d;
 
-public class BeltBlockCallback implements BlockSubLevelCollisionCallback {
+public class BeltBlockCallback implements LevelAwareBlockSubLevelCollisionCallback {
     public static BeltBlockCallback INSTANCE = new BeltBlockCallback();
 
     private BeltBlockCallback() {}
 
     @Override
-    public BlockSubLevelCollisionCallback.CollisionResult sable$onCollision(final BlockPos pos, final Vector3d pos1, final double impactVelocity) {
-        final SubLevelPhysicsSystem system = SubLevelPhysicsSystem.getCurrentlySteppingSystem();
-        final ServerLevel level = system.getLevel();
-
+    public CollisionResult sable$onCollision(final ServerLevel level, final BlockPos pos, final Vector3d hitPos, final double impactVelocity) {
         final BlockEntity blockEntity = level.getBlockEntity(pos);
 
         if (!(blockEntity instanceof final BeltBlockEntity belt))
@@ -53,7 +50,7 @@ public class BeltBlockCallback implements BlockSubLevelCollisionCallback {
 //            }
 //        }
 
-        if (slope == BeltSlope.HORIZONTAL && pos1.y - belt.getBlockPos().getY() < 0.5) {
+        if (slope == BeltSlope.HORIZONTAL && hitPos.y - belt.getBlockPos().getY() < 0.5) {
             velocity.negate();
         }
 

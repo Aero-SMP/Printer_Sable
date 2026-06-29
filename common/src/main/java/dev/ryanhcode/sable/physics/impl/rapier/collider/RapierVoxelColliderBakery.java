@@ -3,6 +3,8 @@ package dev.ryanhcode.sable.physics.impl.rapier.collider;
 import dev.ryanhcode.sable.api.block.BlockSubLevelCollisionShape;
 import dev.ryanhcode.sable.api.block.BlockWithSubLevelCollisionCallback;
 import dev.ryanhcode.sable.api.physics.callback.BlockSubLevelCollisionCallback;
+import dev.ryanhcode.sable.api.physics.callback.LevelAwareBlockSubLevelCollisionCallback;
+import dev.ryanhcode.sable.api.physics.callback.LevelBoundCollisionCallback;
 import dev.ryanhcode.sable.api.physics.collider.SableCollisionContext;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.physics.chunk.VoxelNeighborhoodState;
@@ -10,6 +12,7 @@ import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertyH
 import dev.ryanhcode.sable.physics.impl.rapier.Rapier3D;
 import net.minecraft.Util;
 import net.minecraft.core.BlockPos;
+import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.BlockGetter;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.phys.shapes.VoxelShape;
@@ -27,14 +30,16 @@ import java.util.function.Function;
 public class RapierVoxelColliderBakery {
     private final @NotNull BlockGetter level;
     private final Function<BlockState, RapierVoxelColliderData> blockPhysicsDataBuilder = Util.memoize(this::buildPhysicsDataForBlock);
+    private final ServerLevel serverLevel;
 
     /**
      * Creates a new level collider for the given level
      *
      * @param blockGetter the level to collide with
      */
-    public RapierVoxelColliderBakery(@NotNull final BlockGetter blockGetter) {
+    public RapierVoxelColliderBakery(@NotNull final BlockGetter blockGetter, final ServerLevel serverLevel) {
         this.level = blockGetter;
+        this.serverLevel = serverLevel;
     }
 
     /**
@@ -56,7 +61,12 @@ public class RapierVoxelColliderBakery {
         final double friction = PhysicsBlockPropertyHelper.getFriction(childState);
         final double volume = PhysicsBlockPropertyHelper.getVolume(childState);
         final double restitution = PhysicsBlockPropertyHelper.getRestitution(childState);
-        final BlockSubLevelCollisionCallback callback = BlockWithSubLevelCollisionCallback.sable$getCallback(childState);
+        BlockSubLevelCollisionCallback callback = BlockWithSubLevelCollisionCallback.sable$getCallback(childState);
+
+        if (callback instanceof final LevelAwareBlockSubLevelCollisionCallback levelAwareCallback){
+            callback = new LevelBoundCollisionCallback(this.serverLevel, levelAwareCallback);
+        }
+
         final RapierVoxelColliderData entry = Rapier3D.createVoxelColliderEntry(friction, volume, restitution, liquid, callback);
 
         if (liquid) {

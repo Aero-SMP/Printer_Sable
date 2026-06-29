@@ -67,10 +67,6 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
      */
     public static final boolean USE_TICKETS_FOR_QUERIES = false;
     /**
-     * TODO: Nuke this for threading
-     */
-    public static SubLevelPhysicsSystem currentlySteppingSystem;
-    /**
      * The current physics pipeline.
      */
     private final PhysicsPipeline pipeline;
@@ -142,13 +138,6 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         throw new IllegalArgumentException("Sub-level container not found");
     }
 
-    public static SubLevelPhysicsSystem getCurrentlySteppingSystem() {
-        if (SubLevelPhysicsSystem.currentlySteppingSystem == null) {
-            throw new IllegalStateException("No physics system is currently stepping");
-        }
-        return SubLevelPhysicsSystem.currentlySteppingSystem;
-    }
-
     /**
      * Initializes the physics pipeline.
      */
@@ -217,8 +206,6 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
         this.pipeline.tick();
 
         if (!this.paused) {
-            SubLevelPhysicsSystem.currentlySteppingSystem = this;
-
             // tick the pipeline physics
             try {
                 this.tickPipelinePhysics(container);
@@ -228,8 +215,6 @@ public class SubLevelPhysicsSystem implements SubLevelObserver {
                 crashReportCategory.setDetail("Dimension", this.level.dimension());
                 throw new ReportedException(crashReport);
             }
-
-            SubLevelPhysicsSystem.currentlySteppingSystem = null;
         }
     }
 

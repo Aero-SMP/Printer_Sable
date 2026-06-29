@@ -1,10 +1,9 @@
 package dev.ryanhcode.sable.physics.callback;
 
-import dev.ryanhcode.sable.api.physics.callback.BlockSubLevelCollisionCallback;
+import dev.ryanhcode.sable.api.physics.callback.LevelAwareBlockSubLevelCollisionCallback;
 import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.mixinterface.block_properties.BlockStateExtension;
 import dev.ryanhcode.sable.physics.config.block_properties.PhysicsBlockPropertyTypes;
-import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.level.block.IceBlock;
@@ -12,7 +11,7 @@ import net.minecraft.world.level.block.LeavesBlock;
 import net.minecraft.world.level.block.state.BlockState;
 import org.joml.Vector3d;
 
-public class FragileBlockCallback implements BlockSubLevelCollisionCallback {
+public class FragileBlockCallback implements LevelAwareBlockSubLevelCollisionCallback {
 
     public static final FragileBlockCallback INSTANCE = new FragileBlockCallback();
 
@@ -23,15 +22,12 @@ public class FragileBlockCallback implements BlockSubLevelCollisionCallback {
     }
 
     @Override
-    public BlockSubLevelCollisionCallback.CollisionResult sable$onCollision(final BlockPos pos, final Vector3d pos1, final double impactVelocity) {
+    public CollisionResult sable$onCollision(final ServerLevel level, final BlockPos pos, final Vector3d hitPos, final double impactVelocity) {
         final double triggerVelocity = this.getTriggerVelocity();
 
         if (impactVelocity * impactVelocity < triggerVelocity * triggerVelocity) {
             return CollisionResult.NONE;
         }
-
-        final SubLevelPhysicsSystem system = SubLevelPhysicsSystem.getCurrentlySteppingSystem();
-        final ServerLevel level = system.getLevel();
 
         // Double check that we're actually fragile before breaking (in-case pipeline gave us a slightly off collision position)
         final BlockState state = level.getBlockState(pos);
@@ -40,7 +36,7 @@ public class FragileBlockCallback implements BlockSubLevelCollisionCallback {
             return CollisionResult.NONE;
 
         if (this.shouldTriggerFor(state)) {
-            return this.onHit(level, pos, state, pos1);
+            return this.onHit(level, pos, state, hitPos);
         }
 
         return new CollisionResult(JOMLConversion.ZERO, true);
