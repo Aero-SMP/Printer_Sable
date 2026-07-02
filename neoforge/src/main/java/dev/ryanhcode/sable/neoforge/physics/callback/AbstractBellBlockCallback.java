@@ -1,7 +1,6 @@
 package dev.ryanhcode.sable.neoforge.physics.callback;
 
 import com.simibubi.create.content.equipment.bell.AbstractBellBlock;
-import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import dev.ryanhcode.sable.neoforge.mixin.compatibility.create.impact.AbstractBellBlockAccessor;
 import dev.ryanhcode.sable.physics.callback.FragileBlockCallback;
 import net.minecraft.core.BlockPos;
@@ -23,7 +22,12 @@ public class AbstractBellBlockCallback extends FragileBlockCallback {
     }
 
     @Override
-    public CollisionResult onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
+    protected boolean removesCollisionOnHit(){
+        return false;
+    }
+
+    @Override
+    public void onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
         final Vec3 hitDir = pos.getCenter().subtract(hitPos.x, hitPos.y, hitPos.z);
         final Direction facing = state.getValue(AbstractBellBlock.FACING);
         final BellAttachType attachment = state.getValue(AbstractBellBlock.ATTACHMENT);
@@ -43,7 +47,5 @@ public class AbstractBellBlockCallback extends FragileBlockCallback {
         if (block.canRingFrom(state, ringDir, 0.0)) {
             ((AbstractBellBlockAccessor) block).invokeRing(level, pos, ringDir, null);
         }
-
-        return new CollisionResult(JOMLConversion.ZERO, false);
     }
 }

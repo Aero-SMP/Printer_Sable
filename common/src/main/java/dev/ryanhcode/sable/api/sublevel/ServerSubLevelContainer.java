@@ -8,9 +8,11 @@ import dev.ryanhcode.sable.sublevel.SubLevel;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelOccupancySavedData;
 import dev.ryanhcode.sable.sublevel.storage.SubLevelRemovalReason;
 import dev.ryanhcode.sable.sublevel.storage.holding.SubLevelHoldingChunkMap;
+import dev.ryanhcode.sable.sublevel.system.SimulationMainThreadTask;
 import dev.ryanhcode.sable.sublevel.system.SubLevelPhysicsSystem;
 import dev.ryanhcode.sable.sublevel.system.SubLevelSimulationWorker;
 import dev.ryanhcode.sable.sublevel.system.SubLevelTrackingSystem;
+import dev.ryanhcode.sable.util.LevelAccelerator;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Holder;
 import net.minecraft.resources.ResourceKey;
@@ -23,8 +25,10 @@ import org.jetbrains.annotations.Nullable;
 import org.joml.Vector3d;
 
 import java.util.List;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.ConcurrentLinkedQueue;
 
 /**
  * Holds all sub-levels and plots in a {@link ServerLevel}
@@ -48,6 +52,10 @@ public class ServerSubLevelContainer extends SubLevelContainer {
 
     private SubLevelSimulationWorker simulationWorker;
 
+    private final ConcurrentLinkedQueue<SimulationMainThreadTask> simulationMainThreadTasks = new ConcurrentLinkedQueue<>();
+
+    private final LevelAccelerator mainThreadAccelerator;
+
     /**
      * Creates a new sub-level container with the given side length and plot size.
      *
@@ -59,6 +67,7 @@ public class ServerSubLevelContainer extends SubLevelContainer {
      */
     public ServerSubLevelContainer(final Level level, final int logSideLength, final int logPlotSize, final int originX, final int originZ) {
         super(level, logSideLength, logPlotSize, originX, originZ);
+        this.mainThreadAccelerator = new LevelAccelerator(level);
     }
 
     /**
@@ -75,8 +84,32 @@ public class ServerSubLevelContainer extends SubLevelContainer {
      */
     @Override
     public void tick() {
+        this.runSimulationMainThreadTasks();
+
         super.tick();
         this.holdingChunkMap.processChanges();
+
+        this.runSimulationMainThreadTasks();
+    }
+
+    public LevelAccelerator mainThreadAccelerator(){
+        return this.mainThreadAccelerator;
+    }
+
+    public void queueSimulationMainThreadTask(final SimulationMainThreadTask task){
+        this.simulationMainThreadTasks.add(Objects.requireNonNull(task,"empty simulation main thread task"));
+    }
+
+    private void runSimulationMainThreadTasks(){
+        SimulationMainThreadTask task;
+        while((task = this.simulationMainThreadTasks.poll()) != null){
+            try{
+                task.run(this);
+            }
+            catch (final Exception e){
+                Sable.LOGGER.error("Failed to run queued Sable simulation task",e);
+            }
+        }
     }
 
     /**

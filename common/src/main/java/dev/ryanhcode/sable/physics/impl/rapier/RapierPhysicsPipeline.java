@@ -15,6 +15,7 @@ import dev.ryanhcode.sable.api.physics.object.box.BoxPhysicsObject;
 import dev.ryanhcode.sable.api.physics.object.rope.RopeHandle;
 import dev.ryanhcode.sable.api.physics.object.rope.RopePhysicsObject;
 import dev.ryanhcode.sable.api.sublevel.KinematicContraption;
+import dev.ryanhcode.sable.api.sublevel.ServerSubLevelContainer;
 import dev.ryanhcode.sable.api.sublevel.SubLevelContainer;
 import dev.ryanhcode.sable.companion.math.*;
 import dev.ryanhcode.sable.physics.chunk.VoxelNeighborhoodState;
@@ -54,7 +55,6 @@ import net.minecraft.world.level.block.SoundType;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.phys.Vec3;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 import org.joml.Quaterniond;
@@ -84,6 +84,7 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
     private final Int2ObjectMap<ServerSubLevel> activeSubLevels = new Int2ObjectArrayMap<>();
     private final Object2ObjectMap<KinematicContraption, TrackedKinematicContraption> activeContraptions = new Object2ObjectOpenHashMap<>();
     private final Long2LongOpenHashMap recentCollisions = new Long2LongOpenHashMap();
+    private long collisionEffectCooldownTick;
     private final int sceneId;
     private final double[] cache;
 
@@ -205,15 +206,13 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
     }
 
     private void processCollisionEffects() {
-        this.recentCollisions.long2LongEntrySet().removeIf(entry -> this.level.getGameTime() - entry.getLongValue() > 2);
+        this.collisionEffectCooldownTick++;
+        this.recentCollisions.long2LongEntrySet().removeIf(entry -> this.collisionEffectCooldownTick - entry.getLongValue() > 2);
 
         final Vector3d localPointA = new Vector3d();
         final Vector3d localPointB = new Vector3d();
-        final Vector3d localNormalA = new Vector3d();
-        final Vector3d localNormalB = new Vector3d();
 
-        final Vector3d globalPointA = new Vector3d();
-        final Vector3d globalPointB = new Vector3d();
+        final Vector3d globalPoint = new Vector3d();
 
         final double[] collisions = Rapier3D.clearCollisions(this.sceneId);
 
@@ -226,8 +225,6 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
             final int idB = (int) collisions[startIndex + 1];
 
             final double forceAmount = collisions[startIndex + 2];
-            localNormalA.set(collisions[startIndex + 3], collisions[startIndex + 4], collisions[startIndex + 5]);
-            localNormalB.set(collisions[startIndex + 6], collisions[startIndex + 7], collisions[startIndex + 8]);
             localPointA.set(collisions[startIndex + 9], collisions[startIndex + 10], collisions[startIndex + 11]);
             localPointB.set(collisions[startIndex + 12], collisions[startIndex + 13], collisions[startIndex + 14]);
 
@@ -236,62 +233,58 @@ public class RapierPhysicsPipeline implements PhysicsPipeline {
 
             final double minMass = Math.min(subLevelA != null ? subLevelA.getMassTracker().getMass() : Double.MAX_VALUE, subLevelB != null ? subLevelB.getMassTracker().getMass() : Double.MAX_VALUE);
 
-            if (forceAmount > 25.0 * minMass) {
-                BlockState stateA = Blocks.STONE.defaultBlockState();
-                BlockState stateB = stateA;
+            final ServerSubLevelContainer container = ServerSubLevelContainer.getContainer(this.level);
 
+            if (forceAmount > 25.0 * minMass) {
                 if (subLevelA != null) {
                     final Pose3d pose = subLevelA.logicalPose();
                     pos.set(localPointA.x + pose.rotationPoint().x, localPointA.y + pose.rotationPoint().y, localPointA.z + pose.rotationPoint().z);
                     cornerPos.set(localPointA.x + pose.rotationPoint().x + 0.5, localPointA.y + pose.rotationPoint().y + 0.5, localPointA.z + pose.rotationPoint().z + 0.5);
 
-                    final long exists = this.recentCollisions.put(cornerPos.asLong(), this.level.getGameTime());
+                    final long exists = this.recentCollisions.put(cornerPos.asLong(), this.collisionEffectCooldownTick);
 
                     if (exists != -1) {
                         continue;
                     }
-
-                    stateA = this.accelerator.getBlockState(pos);
                 }
-
 
                 if (subLevelB != null) {
                     final Pose3d pose = subLevelB.logicalPose();
                     pos.set(localPointB.x + pose.rotationPoint().x, localPointB.y + pose.rotationPoint().y, localPointB.z + pose.rotationPoint().z);
                     cornerPos.set(localPointB.x + pose.rotationPoint().x + 0.5, localPointB.y + pose.rotationPoint().y + 0.5, localPointB.z + pose.rotationPoint().z + 0.5);
 
-                    final long exists = this.recentCollisions.put(cornerPos.asLong(), this.level.getGameTime());
+                    final long exists = this.recentCollisions.put(cornerPos.asLong(), this.collisionEffectCooldownTick);
 
                     if (exists != -1) {
                         continue;
                     }
-
-                    stateB = this.accelerator.getBlockState(pos);
                 }
-
-                globalPointA.set(localPointA);
-                globalPointB.set(localPointB);
 
                 if (subLevelA != null) {
+                    globalPoint.set(localPointA);
                     final Pose3d pose = subLevelA.logicalPose();
-                    pose.orientation().transform(globalPointA).add(pose.position());
-                }
-
-                if (subLevelB != null) {
+                    pose.orientation().transform(globalPoint).add(pose.position());
+                } else {
+                    globalPoint.set(localPointB);
                     final Pose3d pose = subLevelB.logicalPose();
-                    pose.orientation().transform(globalPointB).add(pose.position());
+                    pose.orientation().transform(globalPoint).add(pose.position());
                 }
 
-                final BlockState state = stateB;
-                this.level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, state), globalPointA.x, globalPointA.y, globalPointA.z, 2, 0.0, 0.0, 0.0, 0.1);
+                final Vector3d finalGlobalPoint = new Vector3d(globalPoint);
+                final BlockPos finalPos = new BlockPos(pos);
 
-                final Vec3 position = JOMLConversion.toMojang(globalPointA);
-                final float volumeScale = 0.4f;
-                final SoundType soundType = state.getSoundType();
+                container.queueSimulationMainThreadTask(mainThreadContainer->{
+                    final BlockState finalState = mainThreadContainer.mainThreadAccelerator().getBlockState(finalPos);
 
-                this.level.playSound(null, position.x, position.y, position.z, soundType.getStepSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (0.6 - 0.2 + Math.random() * 0.4));
-                this.level.playSound(null, position.x, position.y, position.z, soundType.getHitSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (Math.random() * 0.4));
-                this.level.playSound(null, position.x, position.y, position.z, soundType.getPlaceSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (0.5 - 0.2 + Math.random() * 0.4));
+                    this.level.sendParticles(new BlockParticleOption(ParticleTypes.BLOCK, finalState), finalGlobalPoint.x, finalGlobalPoint.y, finalGlobalPoint.z, 2, 0.0, 0.0, 0.0, 0.1);
+
+                    final float volumeScale = 0.4f;
+                    final SoundType soundType = finalState.getSoundType();
+
+                    this.level.playSound(null, finalGlobalPoint.x, finalGlobalPoint.y, finalGlobalPoint.z, soundType.getStepSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (0.6 - 0.2 + Math.random() * 0.4));
+                    this.level.playSound(null, finalGlobalPoint.x, finalGlobalPoint.y, finalGlobalPoint.z, soundType.getHitSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (Math.random() * 0.4));
+                    this.level.playSound(null, finalGlobalPoint.x, finalGlobalPoint.y, finalGlobalPoint.z, soundType.getPlaceSound(), SoundSource.BLOCKS, 0.2f * volumeScale, (float) (0.5 - 0.2 + Math.random() * 0.4));
+                });
             }
         }
     }

@@ -1,6 +1,5 @@
 package dev.ryanhcode.sable.physics.callback;
 
-import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.item.PrimedTnt;
@@ -25,12 +24,16 @@ public class ExplosiveBlockCallback extends FragileBlockCallback {
     }
 
     @Override
-    public CollisionResult onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
+    protected boolean removesCollisionOnHit(){
+        return true;
+    }
+
+    @Override
+    public void onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
         final PrimedTnt primedTnt = new PrimedTnt(level, pos.getX() + 0.5, pos.getY(), pos.getZ() + 0.5, null);
         primedTnt.setFuse(4);
         level.addFreshEntity(primedTnt);
 
         level.setBlock(pos, Blocks.AIR.defaultBlockState(), 11);
-        return new CollisionResult(JOMLConversion.ZERO, true);
     }
 }

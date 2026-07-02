@@ -1,6 +1,5 @@
 package dev.ryanhcode.sable.physics.callback;
 
-import dev.ryanhcode.sable.companion.math.JOMLConversion;
 import net.minecraft.core.BlockPos;
 import net.minecraft.server.level.ServerLevel;
 import net.minecraft.world.entity.player.Player;
@@ -27,7 +26,12 @@ public class BeehiveBlockCallback extends FragileBlockCallback {
     }
 
     @Override
-    public CollisionResult onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
+    protected boolean removesCollisionOnHit(){
+        return false;
+    }
+
+    @Override
+    public void onHit(final ServerLevel level, final BlockPos pos, final BlockState state, final Vector3d hitPos) {
         final BlockEntity be = level.getBlockEntity(pos);
 
         if (be instanceof final BeehiveBlockEntity beehiveBlockEntity) {
@@ -36,7 +40,5 @@ public class BeehiveBlockCallback extends FragileBlockCallback {
             final Player nearbyPlayer = level.getNearestPlayer(center.x, center.y, center.z, 4, true);
             beehiveBlockEntity.emptyAllLivingFromHive(nearbyPlayer, state, BeehiveBlockEntity.BeeReleaseStatus.EMERGENCY);
         }
-
-        return new CollisionResult(JOMLConversion.ZERO, false);
     }
 }
